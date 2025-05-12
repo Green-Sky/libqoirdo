@@ -290,120 +290,9 @@ struct Lab16
 };
 #pragma pack(pop)
 
-std::vector<Lab16> g_srgb_to_oklab16;
-
-const float SCALE_L = 1.0f / 65535.0f;
-const float SCALE_A = (1.0f / 65535.0f) * (0.276216f - (-0.233887f));
-const float OFS_A = -0.233887f;
-const float SCALE_B = (1.0f / 65535.0f) * (0.198570f - (-0.311528f));
-const float OFS_B = -0.311528f;
-
-const float MIN_L = 0.000000f, MAX_L = 1.000000f;
-const float MIN_A = -0.233888f, MAX_A = 0.276217f;
-const float MIN_B = -0.311529f, MAX_B = 0.198570f;
-
-static inline Lab srgb_to_oklab(const color_rgba &c)
-{
-	const Lab16 &l = g_srgb_to_oklab16[c.r + c.g * 256 + c.b * 65536];
-
-	Lab res;
-	res.L = l.m_L * SCALE_L;
-	res.a = l.m_a * SCALE_A + OFS_A;
-	res.b = l.m_b * SCALE_B + OFS_B;
-
-	return res;
-}
-
-static inline Lab srgb_to_oklab_norm(const color_rgba& c)
-{
-	const Lab16& l = g_srgb_to_oklab16[c.r + c.g * 256 + c.b * 65536];
-
-	Lab res;
-	res.L = l.m_L * SCALE_L;
-	res.a = l.m_a * SCALE_L;
-	res.b = l.m_b * SCALE_L;
-
-	return res;
-}
-
-static void init_oklab_table(const char *pExec, bool quiet, bool caching_enabled)
-{
-	g_srgb_to_oklab16.resize(256 * 256 * 256);
-
-#if 0
-	std::string path(pExec);
-
-	if (caching_enabled)
-	{
-		string_get_pathname(pExec, path);
-		path += "oklab.bin";
-
-		std::vector<uint8_t> file_data;
-		if (read_file_to_vec(path.c_str(), file_data))
-		{
-			if (file_data.size() == 256 * 256 * 256 * 6)
-			{
-				memcpy(g_srgb_to_oklab16.data(), file_data.data(), file_data.size_in_bytes());
-				if (!quiet)
-					printf("Read Oklab table data from file %s\n", path.c_str());
-				return;
-			}
-		}
-	}
-#endif
-
-	if (!quiet)
-		printf("Computing Oklab table\n");
-
-	for (uint32_t r = 0; r <= 255; r++)
-	{
-		//printf("%u\n", r);
-
-		for (uint32_t g = 0; g <= 255; g++)
-		{
-			for (uint32_t b = 0; b <= 255; b++)
-			{
-				color_rgba c(r, g, b, 255);
-				Lab l(linear_srgb_to_oklab({ g_srgb_to_linear[c.r], g_srgb_to_linear[c.g], g_srgb_to_linear[c.b] }));
-
-				assert(l.L >= MIN_L && l.L <= MAX_L);
-				assert(l.a >= MIN_A && l.a <= MAX_A);
-				assert(l.b >= MIN_B && l.b <= MAX_B);
-
-				float lL = std::round(((l.L - MIN_L) / (MAX_L - MIN_L)) * 65535.0f);
-				float la = std::round(((l.a - MIN_A) / (MAX_A - MIN_A)) * 65535.0f);
-				float lb = std::round(((l.b - MIN_B) / (MAX_B - MIN_B)) * 65535.0f);
-
-				lL = clamp(lL, 0.0f, 65535.0f);
-				la = clamp(la, 0.0f, 65535.0f);
-				lb = clamp(lb, 0.0f, 65535.0f);
-
-				Lab16& v = g_srgb_to_oklab16[r + g * 256 + b * 65536];
-				v.m_L = (uint16_t)lL;
-				v.m_a = (uint16_t)la;
-				v.m_b = (uint16_t)lb;
-
-				Lab cl = srgb_to_oklab(c);
-
-				//printf("%f %f %f, %f %f %f\n", l.L, l.a, l.b, cl.L, cl.a, cl.b);
-			}
-		}
-	}
-
-#if 0
-	if (caching_enabled)
-	{
-		if (write_data_to_file(path.c_str(), g_srgb_to_oklab16.data(), g_srgb_to_oklab16.size_in_bytes()))
-		{
-			if (!quiet)
-				printf("Wrote oklab lookup table to file %s\n", path.c_str());
-		}
-		else
-		{
-			fprintf(stderr, "Failed writing oklab lookup table to file %s\n", path.c_str());
-		}
-	}
-#endif
+// TODO: actually make "norm" ?
+static inline Lab srgb_to_oklab(const color_rgba& c) {
+	return linear_srgb_to_oklab({g_srgb_to_linear[c.r], g_srgb_to_linear[c.g], g_srgb_to_linear[c.b]});
 }
 
 static inline float compute_se(const color_rgba& a, const color_rgba& orig, uint32_t num_comps, const rdo_png_params &params)
@@ -412,8 +301,8 @@ static inline float compute_se(const color_rgba& a, const color_rgba& orig, uint
 
 	if (params.m_perceptual_error)
 	{
-		Lab la = srgb_to_oklab_norm(a);
-		Lab lb = srgb_to_oklab_norm(orig);
+		Lab la = srgb_to_oklab(a);
+		Lab lb = srgb_to_oklab(orig);
 
 		la.L -= lb.L;
 		la.a -= lb.a;
@@ -488,8 +377,8 @@ static inline bool should_reject(const color_rgba& trial_color, const color_rgba
 	{
 		if (params.m_perceptual_error)
 		{
-			Lab t(srgb_to_oklab_norm(trial_color));
-			Lab o(srgb_to_oklab_norm(orig_color));
+			Lab t(srgb_to_oklab(trial_color));
+			Lab o(srgb_to_oklab(orig_color));
 
 			float L_diff = fabs(t.L - o.L);
 
@@ -714,9 +603,6 @@ static void create_smooth_maps(
 #endif
 }
 
-//#define QOI_IMPLEMENTATION
-//#include "qoi.h"
-
 #pragma pack(push, 1)
 struct qoi_header
 {
@@ -728,122 +614,6 @@ struct qoi_header
 };
 #pragma pack(pop)
 
-#if 0
-static void encode_qoi(const image& img, std::vector<uint8_t>& data)
-{
-	color_rgba hash[64];
-	clear_obj(hash);
-
-	data.resize(0);
-
-	qoi_header hdr;
-	memcpy(hdr.magic, "qoif", 4);
-	hdr.width = byteswap_32(img.get_width());
-	hdr.height = byteswap_32(img.get_height());
-	hdr.channels = img.has_alpha() ? 4 : 3;
-	hdr.colorspace = 0;
-	data.resize(sizeof(hdr));
-	memcpy(data.data(), &hdr, sizeof(hdr));
-
-	int prev_r = 0, prev_g = 0, prev_b = 0, prev_a = 255;
-	uint32_t cur_run_len = 0;
-
-	for (uint32_t y = 0; y < img.get_height(); y++)
-	{
-		for (uint32_t x = 0; x < img.get_width(); x++)
-		{
-			const color_rgba& c = img(x, y);
-
-			if ((c.r == prev_r) && (c.g == prev_g) && (c.b == prev_b) && (c.a == prev_a))
-			{
-				cur_run_len++;
-				if (cur_run_len == 62)
-				{
-					data.push_back(0xC0 | (cur_run_len - 1));
-					cur_run_len = 0;
-				}
-				continue;
-			}
-
-			if (cur_run_len)
-			{
-				data.push_back((64 + 128) | (cur_run_len - 1));
-				cur_run_len = 0;
-			}
-
-			uint32_t hash_idx = (c.r * 3 + c.g * 5 + c.b * 7 + c.a * 11) & 63;
-			color_rgba& hash_color = hash[hash_idx];
-
-			if (c == hash_color)
-			{
-				data.push_back(hash_idx);
-			}
-			else
-			{
-				hash[hash_idx] = c;
-
-				int dr = ((int)c.r - prev_r + 2) & 255;
-				int dg = ((int)c.g - prev_g + 2) & 255;
-				int db = ((int)c.b - prev_b + 2) & 255;
-
-				if (c.a == prev_a)
-				{
-					if ((dr <= 3) && (dg <= 3) && (db <= 3))
-					{
-						data.push_back(64 + (dr << 4) + (dg << 2) + db);
-					}
-					else
-					{
-						int g_diff = (int)c.g - prev_g;
-
-						dg = (g_diff + 32) & 255;
-
-						dr = (((int)c.r - prev_r) - g_diff + 8) & 255;
-						db = (((int)c.b - prev_b) - g_diff + 8) & 255;
-
-						if ((dg <= 63) && (dr <= 15) && (db <= 15))
-						{
-							data.push_back((uint8_t)(128 + dg));
-							data.push_back((uint8_t)((dr << 4) | db));
-						}
-						else
-						{
-							data.push_back(254);
-							data.push_back((uint8_t)c.r);
-							data.push_back((uint8_t)c.g);
-							data.push_back((uint8_t)c.b);
-						}
-					}
-				}
-				else
-				{
-					data.push_back(255);
-					data.push_back((uint8_t)c.r);
-					data.push_back((uint8_t)c.g);
-					data.push_back((uint8_t)c.b);
-					data.push_back((uint8_t)c.a);
-				}
-			}
-
-			prev_r = c.r;
-			prev_g = c.g;
-			prev_b = c.b;
-			prev_a = c.a;
-		}
-	}
-
-	if (cur_run_len)
-	{
-		data.push_back((64 + 128) | (cur_run_len - 1));
-		cur_run_len = 0;
-	}
-
-	for (uint32_t i = 0; i < 7; i++)
-		data.push_back(0);
-	data.push_back(1);
-}
-#endif
-
 static bool encode_rdo_qoi(
 	const image& orig_img,
 	std::vector<uint8_t>& data,
@@ -854,7 +624,8 @@ static bool encode_rdo_qoi(
 	// This function wasn't designed to deal with lambda=0, so nudge it up.
 	lambda = max(lambda, .0000125f);
 
-	const rdo_png_params params{};
+	rdo_png_params params{};
+	params.m_print_stats = true;
 
 	const bool has_alpha = orig_img.has_alpha();
 	uint32_t num_comps = has_alpha ? 4 : 3;
@@ -1385,7 +1156,6 @@ static float lambda_from_quality(int quality) {
 
 std::vector<uint8_t> encode_qoi_rdo_simple(const uint8_t* data, const qoi_rdo_desc& desc, int quality) {
 	init_srgb_to_linear();
-	init_oklab_table("", true, false);
 
 	const float lambda = lambda_from_quality(quality);
 
